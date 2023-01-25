@@ -391,7 +391,19 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	crResourceKey := kube.NewResourceKey("rbac.authorization.k8s.io", "ClusterRole", "", "helm-guestbook-cr")
 	deployResourceKey := kube.NewResourceKey("apps", "Deployment", "default", "helm-guestbook")
 
+	t.Run("cluster resource children are disabled", func(t *testing.T) {
+		res.OwnerRefs = []metav1.OwnerReference{
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
+			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
+		}
+		cluster.updateChildrenByParentMap(res)
+		assert.Equal(t, map[kube.ResourceKey][]kube.ResourceKey{}, cluster.childrenByParent)
+	})
+
 	t.Run("resource with no owner refs", func(t *testing.T) {
+		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		res.OwnerRefs = []metav1.OwnerReference{}
+
 		cluster.updateChildrenByParentMap(res)
 		assert.Equal(t, map[kube.ResourceKey][]kube.ResourceKey{
 			saResourceKey: {},
@@ -399,6 +411,7 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("resource with an owner ref", func(t *testing.T) {
+		t.Setenv(enableClusterResourceChildrenEnv, "true")
 		res.OwnerRefs = []metav1.OwnerReference{{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"}}
 		cluster.updateChildrenByParentMap(res)
 		assert.Equal(t, map[kube.ResourceKey][]kube.ResourceKey{
@@ -408,6 +421,7 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("resource with multiple owner refs", func(t *testing.T) {
+		t.Setenv(enableClusterResourceChildrenEnv, "true")
 		res.OwnerRefs = []metav1.OwnerReference{
 			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
 			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
@@ -419,6 +433,104 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 			deployResourceKey: {saResourceKey},
 		}, cluster.childrenByParent)
 	})
+}
+
+func TestRemoveFromChildrenByParentMap(t *testing.T) {
+	cluster := newCluster(t, testDeploy(), testClusterRole(), testSA())
+	err := cluster.EnsureSynced()
+	require.NoError(t, err)
+
+	res := &Resource{
+		Ref: corev1.ObjectReference{
+			Kind:       "ServiceAccount",
+			Namespace:  "default",
+			Name:       "helm-guestbook-sa",
+			APIVersion: "v1",
+			UID:        "4",
+		},
+		ResourceVersion: "123",
+		CreationTimestamp: &metav1.Time{
+			Time: testCreationTime.Local(),
+		},
+	}
+
+	crResourceKey := kube.NewResourceKey("rbac.authorization.k8s.io", "ClusterRole", "", "helm-guestbook-cr")
+	deployResourceKey := kube.NewResourceKey("apps", "Deployment", "default", "helm-guestbook")
+
+	t.Run("cluster resource children are disabled", func(t *testing.T) {
+		res.OwnerRefs = []metav1.OwnerReference{
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
+			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
+		}
+		cluster.updateChildrenByParentMap(res)
+		cluster.removeFromChildrenByParentMap(res.ResourceKey())
+
+		expected := map[kube.ResourceKey][]kube.ResourceKey{}
+		assert.Equal(t, expected, cluster.childrenByParent)
+	})
+
+	t.Run("remove object with multiple ownerRefs", func(t *testing.T) {
+		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		res.OwnerRefs = []metav1.OwnerReference{
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
+			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
+		}
+		cluster.updateChildrenByParentMap(res)
+		cluster.removeFromChildrenByParentMap(res.ResourceKey())
+
+		expected := map[kube.ResourceKey][]kube.ResourceKey{
+			crResourceKey:     {},
+			deployResourceKey: {},
+		}
+		assert.Equal(t, expected, cluster.childrenByParent)
+	})
+
+	t.Run("object with no ownerRefs", func(t *testing.T) {
+		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		res.OwnerRefs = []metav1.OwnerReference{}
+		cluster.updateChildrenByParentMap(res)
+		cluster.removeFromChildrenByParentMap(res.ResourceKey())
+
+		expected := map[kube.ResourceKey][]kube.ResourceKey{
+			crResourceKey:     {},
+			deployResourceKey: {},
+		}
+		assert.Equal(t, expected, cluster.childrenByParent)
+	})
+
+	t.Run("object not found in childrenByParentMap", func(t *testing.T) {
+		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		res.OwnerRefs = []metav1.OwnerReference{
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
+			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
+		}
+
+		cluster.updateChildrenByParentMap(res)
+
+		newRes := &Resource{
+			Ref: corev1.ObjectReference{
+				Kind:       "CustomResource",
+				Namespace:  "default",
+				Name:       "sample",
+				APIVersion: "v1",
+				UID:        "4",
+			},
+			ResourceVersion: "123",
+			CreationTimestamp: &metav1.Time{
+				Time: testCreationTime.Local(),
+			},
+		}
+		cluster.removeFromChildrenByParentMap(newRes.ResourceKey())
+
+		saResourceKey := kube.NewResourceKey("", "ServiceAccount", "default", "helm-guestbook-sa")
+		expected := map[kube.ResourceKey][]kube.ResourceKey{
+			saResourceKey:     {},
+			crResourceKey:     {saResourceKey},
+			deployResourceKey: {saResourceKey},
+		}
+		assert.Equal(t, expected, cluster.childrenByParent)
+	})
+
 }
 
 func TestGetManagedLiveObjs(t *testing.T) {
