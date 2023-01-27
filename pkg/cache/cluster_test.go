@@ -306,6 +306,7 @@ func TestGetChildren(t *testing.T) {
 	cluster := newCluster(t, testPod1(), testRS(), testDeploy(), testClusterRole(), testSA())
 	err := cluster.EnsureSynced()
 	require.NoError(t, err)
+	cluster.showClusterResourceChildren = true
 
 	rsChildren := getChildren(cluster, mustToUnstructured(testRS()))
 	assert.Equal(t, []*Resource{{
@@ -373,6 +374,10 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	err := cluster.EnsureSynced()
 	require.NoError(t, err)
 
+	t.Cleanup(func() {
+		cluster.showClusterResourceChildren = false
+	})
+
 	res := &Resource{
 		Ref: corev1.ObjectReference{
 			Kind:       "ServiceAccount",
@@ -401,7 +406,7 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("resource with no owner refs", func(t *testing.T) {
-		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		cluster.showClusterResourceChildren = true
 		res.OwnerRefs = []metav1.OwnerReference{}
 
 		cluster.updateChildrenByParentMap(res)
@@ -411,7 +416,7 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("resource with an owner ref", func(t *testing.T) {
-		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		cluster.showClusterResourceChildren = true
 		res.OwnerRefs = []metav1.OwnerReference{{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"}}
 		cluster.updateChildrenByParentMap(res)
 		assert.Equal(t, map[kube.ResourceKey][]kube.ResourceKey{
@@ -421,7 +426,7 @@ func TestUpdateChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("resource with multiple owner refs", func(t *testing.T) {
-		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		cluster.showClusterResourceChildren = true
 		res.OwnerRefs = []metav1.OwnerReference{
 			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
 			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
@@ -439,6 +444,10 @@ func TestRemoveFromChildrenByParentMap(t *testing.T) {
 	cluster := newCluster(t, testDeploy(), testClusterRole(), testSA())
 	err := cluster.EnsureSynced()
 	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		cluster.showClusterResourceChildren = false
+	})
 
 	res := &Resource{
 		Ref: corev1.ObjectReference{
@@ -470,7 +479,7 @@ func TestRemoveFromChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("remove object with multiple ownerRefs", func(t *testing.T) {
-		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		cluster.showClusterResourceChildren = true
 		res.OwnerRefs = []metav1.OwnerReference{
 			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
 			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
@@ -486,7 +495,7 @@ func TestRemoveFromChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("object with no ownerRefs", func(t *testing.T) {
-		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		cluster.showClusterResourceChildren = true
 		res.OwnerRefs = []metav1.OwnerReference{}
 		cluster.updateChildrenByParentMap(res)
 		cluster.removeFromChildrenByParentMap(res.ResourceKey())
@@ -499,7 +508,7 @@ func TestRemoveFromChildrenByParentMap(t *testing.T) {
 	})
 
 	t.Run("object not found in childrenByParentMap", func(t *testing.T) {
-		t.Setenv(enableClusterResourceChildrenEnv, "true")
+		cluster.showClusterResourceChildren = true
 		res.OwnerRefs = []metav1.OwnerReference{
 			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "helm-guestbook-cr", UID: "5"},
 			{APIVersion: "apps/v1", Kind: "Deployment", Name: "helm-guestbook", UID: "3"},
